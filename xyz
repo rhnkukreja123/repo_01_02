@@ -1,0 +1,84 @@
+class pdfreader():
+    def __init__(self):
+        pass
+      
+    def extract_content(path):
+        mypath = path
+        files = glob.glob(mypath + "/*.pdf")
+        this_loc=1
+        df = pd.DataFrame(columns =('name','content'))
+        for file in files:
+            images = convert_from_path(f'{file}', poppler_path=poppler_path)
+            ocr_text = ''
+            print(df['name'])
+            for i in range(len(images)):        
+                page_content = pytesseract.image_to_string(images[i])
+                #page_content = '***PDF Page {}***\n'.format(i+1) + page_content
+                ocr_text = ocr_text + ' ' + page_content
+            df.loc[this_loc]= os.path.basename(file),ocr_text
+            this_loc=this_loc+1
+        df_to_index=df.to_dict('records')
+        preprocessor = PreProcessor(
+            clean_empty_lines=True,
+            clean_whitespace=True,
+            clean_header_footer=False,
+            split_by="word",
+            split_length=100,
+            split_respect_sentence_boundary=True)
+        preprocessed_docs = preprocessor.process(df_to_index)
+        return preprocessed_docs
+
+    def extract_content_single_file(file):
+        this_loc=1
+        df = pd.DataFrame(columns =('name','content'))
+        images = convert_from_path(f'{file}', poppler_path=poppler_path)
+        ocr_text = ''
+        for i in range(len(images)):        
+            page_content = pytesseract.image_to_string(images[i])
+            #page_content = '***PDF Page {}***\n'.format(i+1) + page_content
+            ocr_text = ocr_text + ' ' + page_content
+        df.loc[this_loc]= os.path.basename(file),ocr_text
+        this_loc=this_loc+1
+        df_to_index=df.to_dict('records')
+        preprocessor = PreProcessor(
+            clean_empty_lines=True,
+            clean_whitespace=True,
+            clean_header_footer=False,
+            split_by="word",
+            split_length=100,
+            split_respect_sentence_boundary=True)
+        preprocessed_docs = preprocessor.process(df_to_index)
+        return preprocessed_docs
+
+    def document_store(preprocessed_docs):
+       document_store = ElasticsearchDocumentStore(host="localhost", index="docparser2",similarity="cosine")
+       document_store.delete_documents()
+       document_store.write_documents(preprocessed_docs)
+       retriever = EmbeddingRetriever(document_store=document_store, embedding_model="sentence-transformers/multi-qa-mpnet-base-dot-v1")
+       print('Updating.')
+       document_store.update_embeddings(
+           retriever=retriever,update_existing_embeddings=False)
+       reader = FARMReader(model_name_or_path='deepset/roberta-base-squad2')
+       pipe = ExtractiveQAPipeline(reader, retriever)
+       return pipe
+
+    def ask_question(question,pipe,filter_on=None):
+        if filter_on is not None:
+            filter = {'name': f'{filter_on}'}
+            result = pipe.run(query=question, params={
+                "Retriever": {"top_k": 20}, "Reader": {"top_k": 3},'filters':filter})
+            print("Results:")
+            ans=[]
+            ans1=["Context:"]
+            # print_answers(result,details='minimum')
+            for answer in result["answers"]:
+                ans.append(answer.answer)
+                c = [[i+1, ans[i]] for i in range(len(ans))]
+            return c
+        else:
+            result = pipe.run(query=question, params={
+                "Retriever": {"top_k": 20}, "Reader": {"top_k": 3}})
+            ans = print_answers(result,details='minimum')
+            # res=result[0]
+            return ans
+
